@@ -89,7 +89,18 @@ def main(args):
         print(f'[INFO] {sample_i} has {num_cells} cells.')
         if args.write_cn_clone_added_h5s:
             out_dir = wd / 'cn_clone_added_h5s'
-            mio.save(sample_objs[sample_i], str(out_dir / f"{sample_i}_cn_clone_added.h5"))
+            out_dir.mkdir(exist_ok=True, parents=True)
+            try:
+                mio.save(sample_objs[sample_i], str(out_dir / f"{sample_i}_cn_clone_added.h5"))
+            except FileExistsError:
+                print(f'[WARNING] {out_dir / f"{sample_i}_cn_clone_added.h5"} already exists! Overwriting...')
+                try: 
+                    # delete and try again
+                     os.remove(str(out_dir / f"{sample_i}_cn_clone_added.h5"))
+                     mio.save(sample_objs[sample_i], str(out_dir / f"{sample_i}_cn_clone_added.h5"))
+                except:
+                    print(f'[ERROR] {out_dir / f"{sample_i}_cn_clone_added.h5"} already exists and cannot be overwritten!')
+
 
     # ====== set up for plotting ======
     # mkdir, get plotting params
