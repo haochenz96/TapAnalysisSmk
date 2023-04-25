@@ -14,6 +14,8 @@ from tea.format import isNaN
 from tea.plots import plot_snv_clone
 from datetime import datetime
 from collections import Counter
+
+from tea.cravat import get_technical_artifact_mask
 from tea.utils import get_simple_timestamp
 timestamp = get_simple_timestamp()
 from IPython import embed
@@ -64,8 +66,9 @@ def main(args):
             raise ValueError(f'[ERROR] `clone_id`/`cluster_id` column not found in CN clone assignment file!')
 
 
-    unique_cluster_ids_sorted = np.sort(np.unique(cn_assignment_df['clone_id']))
+    unique_cluster_ids_sorted = np.sort(np.unique(cn_assignment_df['clone_id'].astype(int)))
     unique_cluster_ids_sorted_named = [ f"CN_clone-{clone_i}" for clone_i in unique_cluster_ids_sorted ]
+    # embed()
     cn_clone_palette = dict(zip(unique_cluster_ids_sorted_named, np.array(px.colors.qualitative.Set3)[unique_cluster_ids_sorted]))
 
     for sample_i in sample_names:
@@ -82,7 +85,7 @@ def main(args):
             raise ValueError(f"{sample_i} not in cn_assignment_df.index")
         cn_assignment_dict = cn_assignment_df.loc[sample_i,:].set_index('cell_barcode').to_dict()['clone_id']
 
-        sample_objs[sample_i].dna.row_attrs['label'] = np.array(list(map(lambda x: f"CN_clone-{cn_assignment_dict[x]}", sample_objs[sample_i].dna.barcodes())))
+        sample_objs[sample_i].dna.row_attrs['label'] = np.array(list(map(lambda x: f"CN_clone-{int(cn_assignment_dict[x])}", sample_objs[sample_i].dna.barcodes())))
         sample_objs[sample_i].dna.set_palette(cn_clone_palette)
 
         num_cells = sample_objs[sample_i].dna.shape[0]
@@ -106,51 +109,83 @@ def main(args):
     # mkdir, get plotting params
     (wd / 'sc_heatmaps').mkdir(exist_ok=True, parents=True)
 
-    sc_heatmaps_params = analysis_config['sc_heatmaps_params']
-
-    bq_prev_threshold = sc_heatmaps_params['bq_prev_threshold']
-    if not type(bq_prev_threshold) is float: # single-value
-        raise ValueError(f"bq_prev_threshold must be float, not {type(bq_prev_threshold)}")
-    # embed()
-    mut_prev_threshold = sc_heatmaps_params['mut_prev_threshold']
+    # ----- SNV selection -----
+    snv_selection_params = analysis_config['snv_selection_params']
+    
+    # 1. mutational prevalence
+    mut_prev_threshold = snv_selection_params['mut_prev_threshold']
     if not type(mut_prev_threshold) is list:
         mut_prev_threshold = [mut_prev_threshold]
+    
+    # 2. technical artifact filters
+    bq_prev_threshold = snv_selection_params['bq_prev_threshold']
+    if not type(bq_prev_threshold) is float: # single-value
+        raise ValueError(f"bq_prev_threshold must be float, not {type(bq_prev_threshold)}")
 
-    topic = sc_heatmaps_params['topic']
+    # 3. functional artifacts
+    topic = snv_selection_params['topic']
     if not type(topic) is str: # single-value
         raise ValueError(f"topic must be str, not {type(topic)}")
     try: 
-        func_only = sc_heatmaps_params['func_only']
+        func_only = snv_selection_params['func_only']
         func_only = bool(func_only)
     except KeyError:
         func_only = False
     except TypeError:
         func_only = False
 
-    attribute = sc_heatmaps_params['attribute']
+    # 4. germline snvs
+    germline_attrs = {}
+    for germline_attr_i in ['remove_hom_germline_snps_af', 'rescue_1000genome_af']:
+        if not germline_attr_i in snv_selection_params:
+            germline_attrs[germline_attr_i] = False
+        else:
+            germline_attrs[germline_attr_i] = snv_selection_params[germline_attr_i]
+
+    # 5. plotting params
+    attribute = snv_selection_params['attribute']
     if not type(attribute) is list:
         attribute = [attribute]
 
+    # whitelist snvs
+    if 'whitelist_snvs' in snv_selection_params and snv_selection_params['whitelist_snvs']:
+        whitelist_snvs = set(snv_selection_params['whitelist_snvs'])
+    else:
+        whitelist_snvs = []
+
     for mut_prev_i in mut_prev_threshold:
-        (wd / 'sc_heatmaps' / topic / f"mut_prev>={mut_prev_i}").mkdir(exist_ok=True, parents=True)
+        (wd / 'sc_heatmaps' / topic / f"mut_prev={mut_prev_i}").mkdir(exist_ok=True, parents=True)
         for attribute_i in attribute:
 
             voi_union = set()
             voi_count_union = {}
             ann_map_union = {}
+            bulk_germline_vars = set()
+            bulk_somatic_vars = set()
 
             # ====== for each sample_i, filter SNVs and get a union set for plotting  ======
             # embed()
             for sample_i in sample_names:
                 num_cells = sample_objs[sample_i].dna.shape[0]
-                mask = isNaN(cravat_dfs[sample_i][('bulk_comparison', 'bulk-broad_wes_pon-AF')]) & \
-                ~(cravat_dfs[sample_i][('PoN_comparison','PoN-superset-8-normals-occurence')] >= 4) & \
-                ~(cravat_dfs[sample_i][('blacklist_comparison', 'blacklist-base_qual-sc_prev')] >= bq_prev_threshold * num_cells) & \
-                ~(cravat_dfs[sample_i][('blacklist_comparison', 'blacklist-base_qual-sc_prev')] >= cravat_dfs[sample_i][('Tapestri_result', 'sc_mut_prev')]) & \
-                (cravat_dfs[sample_i][('Tapestri_result', 'sc_mut_prev')] >= mut_prev_i * num_cells)
+                
+                # this masks on PoN's (rescuing 1000genome SNVs) and bq_prev_threshold
+                mask = get_technical_artifact_mask(cravat_dfs[sample_i], num_cells = num_cells, bq_prev_threshold = bq_prev_threshold, normals_pon_occurence=4, rescue_1000genome_af = germline_attrs['rescue_1000genome_af'], filter_broad_wes_pon = False)
+                
+                # filters on mut_prev_threshold
+                mask = mask & (cravat_dfs[sample_i][('Tapestri_result', 'sc_mut_prev')] >= mut_prev_i * num_cells)
+                
+                # filters on functional SNVs
                 if func_only:
                     mask = mask & ~cravat_dfs[sample_i][('Variant Annotation', 'Sequence Ontology')].isin(NONFUNC_SO)
-                voi = cravat_dfs[sample_i].index[mask]
+
+                voi = cravat_dfs[sample_i].index[mask].tolist()
+
+                # remove homozygous germline SNVs, if specified
+                if germline_attrs['remove_hom_germline_snps_af']:
+                    overall_af = sample_objs[sample_i].dna.get_attribute('alt_read_count', constraint='row').sum(axis=0) / sample_objs[sample_i].dna.get_attribute('DP', constraint='row').sum(axis=0)
+                    voi = [x for x in voi if overall_af[x] < germline_attrs['remove_hom_germline_snps_af']]
+
+                voi = list(set(voi).union(whitelist_snvs))
                 voi_mut_prev = Counter(cravat_dfs[sample_i].loc[voi, ('Tapestri_result', 'sc_mut_prev')].to_dict())
 
                 print(f'{sample_i}: {len(voi)} / {len(cravat_dfs[sample_i])} SNVs are kept (min prev: {mut_prev_i})')
@@ -161,13 +196,41 @@ def main(args):
                 )
                 ann_map = dict(zip(voi, ann))
 
+                # ====== save bulk annotated vars ======
+                try:
+                    bulk_annotation_df = cravat_dfs[sample_i].loc[voi, [
+                        ('bulk_comparison', 'bulk-matched_bulk_normal-AF'), 
+                        ('bulk_comparison', 'bulk-matched_bulk_cohort-AF'),
+                        ]] > 0
+                    for var_i in bulk_annotation_df.index:
+                        if bulk_annotation_df.loc[var_i, ('bulk_comparison', 'bulk-matched_bulk_normal-AF')] == True:
+                            bulk_germline_vars.add(var_i)
+                        elif bulk_annotation_df.loc[var_i, ('bulk_comparison', 'bulk-matched_bulk_cohort-AF')] == True:
+                            bulk_somatic_vars.add(var_i)
+                except KeyError:
+                    print(f'bulk annotation not found in CRAVAT DF for {sample_i}')
+
                 # ===== get a union of all samples SNVs =====
-                voi_union = voi_union.union(set(voi.tolist()))
+                voi_union = voi_union.union(set(voi))
                 voi_count_union.update(voi_mut_prev)
                 ann_map_union.update(ann_map)
 
+            # ===== highlight vars with bulk annotation ====='
+            # highlight vars
+            germline_var_col = '#00cc66' # dark green
+            somatic_var_col = '#ff0000' # red
+
+            for var_i in ann_map_union:
+                # germline
+                if var_i in bulk_germline_vars:
+                    ann_map_union[var_i] = f'<span style="color:{germline_var_col};">' + ann_map_union[var_i] + '</span>'
+                elif var_i in bulk_somatic_vars:
+                    ann_map_union[var_i] = f'<span style="color:{somatic_var_col};">' + ann_map_union[var_i] + '</span>'
+                else:
+                    pass
+
             voi_sorted = sorted(voi_count_union, key=voi_count_union.get, reverse=True)
-            with open(wd / 'sc_heatmaps' / topic / f"mut_prev>={mut_prev_i}" / f'{topic}-{attribute_i}-voi.txt', 'w') as f:
+            with open(wd / 'sc_heatmaps' / topic / f"mut_prev={mut_prev_i}" / f'{topic}-{attribute_i}-voi.txt', 'w') as f:
                 f.write(f"timestamp\n")
                 f.write('=====================\n')
                 f.write(f"bq_prev_threshold: {bq_prev_threshold}\n")
@@ -187,10 +250,11 @@ def main(args):
                     attribute = attribute_i,
                     ann_map = ann_map_union
                 )
-
+                fig.update_layout(
+                    width = len(voi_sorted) * 50,
+                )
                 fig.write_image(
-                    wd / 'sc_heatmaps' / topic / f"mut_prev>={mut_prev_i}" / f'{sample_i}-{topic}-{attribute_i}.png',
-                    scale = 3
+                    wd / 'sc_heatmaps' / topic / f"mut_prev={mut_prev_i}" / f'{sample_i}-{topic}-{attribute_i}.pdf',
                 )
 
                 # fig.show()
