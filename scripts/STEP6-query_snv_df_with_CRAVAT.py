@@ -78,29 +78,30 @@ def main(args):
         logging.error('Please check your cravat_settings.yaml file')
         sys.exit(1)
     
-    # 1. establish connection to OpenCRAVAT server:
-    new_session = requests.Session()
-
-    # log in with credentials 
-    cred_str = base64.b64encode(bytes(OPENCRAVAT_USERNAME + ":" + OPENCRAVAT_PASSWORD, 'utf-8')).decode('utf-8')
-    reply = new_session.get(
-        'https://run.opencravat.org/server/login', 
-        headers={'Authorization': 'Basic ' + cred_str})
-    # original cred_str ----->> base64.b64encode(b'zhangh5@mskcc.org:Hfhd68MdTtHn5UE').decode() 
-
-    if not reply.json() == 'success':
-        logging.warning('CRAVAT login failed!')
-        exit(1)
-
-    # @HZ 04/01/2023: this is the new method based on snv_df
-    vars_of_interest = snv_df.index[
-        (snv_df['Tapestri_result-sc_mut_prev'] >= 3)
-    ].tolist()
-    logging.info(f'{len(vars_of_interest)} variants written to CRVAT input')
-    mut_prev_column = snv_df.loc[vars_of_interest, 'Tapestri_result-sc_mut_prev']
-    write_cravat_input(vars_of_interest, CRAVAT_INPUT_PATH, SAMPLE_NAME, mut_prev_column)
-    logging.info(f'{len(vars_of_interest)} variants of interest written to CRAVAT input')
     if not CRAVAT_OUTPUT.is_file():
+        # 1. establish connection to OpenCRAVAT server:
+        new_session = requests.Session()
+
+        # log in with credentials 
+        cred_str = base64.b64encode(bytes(OPENCRAVAT_USERNAME + ":" + OPENCRAVAT_PASSWORD, 'utf-8')).decode('utf-8')
+        reply = new_session.get(
+            'https://run.opencravat.org/server/login', 
+            headers={'Authorization': 'Basic ' + cred_str})
+        # original cred_str ----->> base64.b64encode(b'zhangh5@mskcc.org:Hfhd68MdTtHn5UE').decode() 
+
+        if not reply.json() == 'success':
+            logging.warning('CRAVAT login failed!')
+            exit(1)
+
+        # @HZ 04/01/2023: this is the new method based on snv_df
+        vars_of_interest = snv_df.index[
+            (snv_df['Tapestri_result-sc_mut_prev'] >= 3)
+        ].tolist()
+        logging.info(f'{len(vars_of_interest)} variants written to CRVAT input')
+        mut_prev_column = snv_df.loc[vars_of_interest, 'Tapestri_result-sc_mut_prev']
+        write_cravat_input(vars_of_interest, CRAVAT_INPUT_PATH, SAMPLE_NAME, mut_prev_column)
+        logging.info(f'{len(vars_of_interest)} variants of interest written to CRAVAT input')
+    
         cravat_params = json.dumps({
             "annotators": CRAVAT_ANNOTATORS, 
             "reports": ["text"], 
@@ -131,7 +132,7 @@ def main(args):
         
         f.seek(0) # !!!reset cursor!!!
         cravat_df = pd.read_csv(f, sep='\t', skiprows=4, header=[0,1], low_memory=False)
-        logging.info(f'[INFO] {SAMPLE_NAME} CRAVAT report [ {f} ] read in successfully.')
+        logging.info(f'[INFO] {SAMPLE_NAME} CRAVAT report [ {CRAVAT_OUTPUT} ] read in successfully.')
 
     # 2. clean and format the CRAVAT report
     cravat_df = clean_and_format_cravat_df(cravat_df)

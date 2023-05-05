@@ -181,7 +181,7 @@ def main(args):
                 voi = cravat_dfs[sample_i].index[mask].tolist()
 
                 # remove homozygous germline SNVs, if specified
-                if germline_attrs['remove_hom_germline_snps_af']:
+                if germline_attrs['remove_hom_germline_snps_af'] is not None:
                     overall_af = sample_objs[sample_i].dna.get_attribute('alt_read_count', constraint='row').sum(axis=0) / sample_objs[sample_i].dna.get_attribute('DP', constraint='row').sum(axis=0)
                     voi = [x for x in voi if overall_af[x] < germline_attrs['remove_hom_germline_snps_af']]
 
@@ -251,7 +251,7 @@ def main(args):
                     ann_map = ann_map_union
                 )
                 fig.update_layout(
-                    width = len(voi_sorted) * 50,
+                    width = len(voi_sorted) * 30,
                 )
                 fig.write_image(
                     wd / 'sc_heatmaps' / topic / f"mut_prev={mut_prev_i}" / f'{sample_i}-{topic}-{attribute_i}.pdf',
