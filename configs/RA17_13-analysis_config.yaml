@@ -1,0 +1,31 @@
+cohort_name: RA17_13
+sample_names: ["RA17_13-34_1", "RA17_13-44_1", "RA17_13-50_1", "RA17_13-55_1", "RA17_13-56_1", "RA17_13-67_1", "RA17_13-73_4"]
+
+h5s:
+    RA17_13-34_1: /home/zhangh5/work/Tapestri_batch2/pipeline_results_custom/RA17_13/RA17_13-34_1/OUTPUTS_from_mpileup/RA17_13-34_1.mpileup.h5
+    RA17_13-44_1: /home/zhangh5/work/Tapestri_batch2/pipeline_results_custom/RA17_13/RA17_13-44_1/OUTPUTS_from_mpileup/RA17_13-44_1.mpileup.h5
+    RA17_13-50_1: /home/zhangh5/work/Tapestri_batch2/pipeline_results_custom/RA17_13/RA17_13-50_1/OUTPUTS_from_mpileup/RA17_13-50_1.mpileup.h5
+    RA17_13-55_1: /home/zhangh5/work/Tapestri_batch2/pipeline_results_custom/RA17_13/RA17_13-55_1/OUTPUTS_from_mpileup/RA17_13-55_1.mpileup.h5
+    RA17_13-56_1: /home/zhangh5/work/Tapestri_batch2/pipeline_results_custom/RA17_13/RA17_13-56_1/OUTPUTS_from_mpileup/RA17_13-56_1.mpileup.h5
+    RA17_13-67_1: /home/zhangh5/work/Tapestri_batch2/pipeline_results_custom/RA17_13/RA17_13-67_1/OUTPUTS_from_mpileup/RA17_13-67_1.mpileup.h5
+    RA17_13-73_4: /home/zhangh5/work/Tapestri_batch2/pipeline_results_custom/RA17_13/RA17_13-73_4/OUTPUTS_from_mpileup/RA17_13-73_4.mpileup.h5
+
+cravat_outputs:
+    RA17_13-34_1: /home/zhangh5/work/Tapestri_batch2/pipeline_results_custom/RA17_13/RA17_13-34_1/OUTPUTS_from_mpileup/annotations/RA17_13-34_1_CRAVAT_output.cleaned.txt
+    RA17_13-44_1: /home/zhangh5/work/Tapestri_batch2/pipeline_results_custom/RA17_13/RA17_13-44_1/OUTPUTS_from_mpileup/annotations/RA17_13-44_1_CRAVAT_output.cleaned.txt
+    RA17_13-50_1: /home/zhangh5/work/Tapestri_batch2/pipeline_results_custom/RA17_13/RA17_13-50_1/OUTPUTS_from_mpileup/annotations/RA17_13-50_1_CRAVAT_output.cleaned.txt
+    RA17_13-55_1: /home/zhangh5/work/Tapestri_batch2/pipeline_results_custom/RA17_13/RA17_13-55_1/OUTPUTS_from_mpileup/annotations/RA17_13-55_1_CRAVAT_output.cleaned.txt
+    RA17_13-56_1: /home/zhangh5/work/Tapestri_batch2/pipeline_results_custom/RA17_13/RA17_13-56_1/OUTPUTS_from_mpileup/annotations/RA17_13-56_1_CRAVAT_output.cleaned.txt
+    RA17_13-67_1: /home/zhangh5/work/Tapestri_batch2/pipeline_results_custom/RA17_13/RA17_13-67_1/OUTPUTS_from_mpileup/annotations/RA17_13-67_1_CRAVAT_output.cleaned.txt
+    RA17_13-73_4: /home/zhangh5/work/Tapestri_batch2/pipeline_results_custom/RA17_13/RA17_13-73_4/OUTPUTS_from_mpileup/annotations/RA17_13-73_4_CRAVAT_output_cleaned.txt
+
+cn_assignment_df: /home/zhangh5/work/Tapestri_batch2/analysis/cn_clones/RA17_13/RA17_13-cohort-cn_calling-with_primary+normal-no_homdel-init_maxcn=6/cn_call_no_homdel/outputs/nclones=6/RA17_13.sample_sc_clone_assignment.updated.csv
+
+snv_selection_params:
+    topic: all_vars
+    func_only: False
+    mut_prev_threshold: [0.01]
+    bq_prev_threshold: 0.005
+    rescue_1000genome_af: 0.01 # disable by setting to >= 1 or None
+    remove_hom_germline_snps_af:  # disable by setting to >= 1 or None
+    attribute: AF_MISSING
