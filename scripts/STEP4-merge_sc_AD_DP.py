@@ -6,6 +6,7 @@ import glob
 import logging
 import re
 
+# from IPython import embed
 
 def main(args):
 
@@ -71,10 +72,10 @@ def main(args):
     # # ^^^^^^^^ this is problematic for indels with len(REF) != 1
     
     # set index from CHROM:POS:REF to CHROM:POS
-    # sc_DP_dfs_list = [
-    #     pd.DataFrame(data = df_i.values, index = df_i.index.str.split(':').str[:2].str.join(':'), columns = ['DP'])
-    #     for df_i in sc_DP_dfs_list
-    # ]
+    sc_DP_dfs_list = [
+        pd.DataFrame(data = df_i.values, index = df_i.index.str.split(':').str[:2].str.join(':'), columns = ['DP'])
+        for df_i in sc_DP_dfs_list
+    ]
     # aggregate duplicated positions with the `max` function
     sc_DP_dfs_list = [
         df_i.fillna(0).groupby(level=0).agg('max')
@@ -98,6 +99,7 @@ def main(args):
         else pd.Series([0]*len(sc_DP_dfs_map), index = merged_sc_DP_df.columns),
         axis=1
         )
+    # embed()
     # # for indels where the ref allele is not one single locus, fill in their DP in cells where the mutant allele is not present
     # filled_DP_df.loc[(alleles_df['ref'].str.len() != 1), :].loc[
     #     np.isnan(filled_DP_df)

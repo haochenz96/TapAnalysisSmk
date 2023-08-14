@@ -12,9 +12,7 @@ import mosaic.io as mio
 from tea.utils import *
 from tea.plots import *
 from tea.cravat import *
-import requests
-import base64
-import json
+import requests, base64, json
 import sys, argparse, yaml
 
 # for testing
@@ -157,6 +155,8 @@ def main(args):
             continue
     # adjust the order of bulk & pon comparison columns
     for lv1_col_name in ['bulk_comparison', 'PoN_comparison', 'blacklist_comparison']:
+        if not lv1_col_name in cravat_df.columns.levels[0]:
+            continue
         cols = cravat_df.pop(lv1_col_name)
         for i in range(cols.shape[1]):
             cravat_df.insert(i, (lv1_col_name, cols.columns[i]), cols.iloc[:,i])

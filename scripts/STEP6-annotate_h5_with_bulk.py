@@ -80,12 +80,10 @@ def main(args):
         min_alt_read = 3
     )
     VAR_DF = pd.DataFrame(index=sample_obj.dna.ids())
-    # embed()
     # add sc_mut_prev info
     VAR_DF['Tapestri_result-sc_mut_prev'] = sample_obj.dna.get_attribute(
         'mut_filtered', constraint='row'
     ).sum(axis=0).values
-    # embed()
 
     # @HZ 03/27/2023: deprecated
     # try:
@@ -123,7 +121,7 @@ def main(args):
         # get condensed variant format
         if bulk_dfs[ds].index.name not in ('Tapestri_format', 'condensed_format'):
             if ('Tapestri_format' or 'condensed_format') not in bulk_dfs[ds].columns:
-                # embed()
+
                 raise ValueError(f'[ERROR] --- {ds} does not have Tapestri_format or condensed_format column!')
                 # try:
                 #     bulk_dfs[ds]['Tapestri_format'] = bulk_dfs[ds]['CHROM'] + ":" + bulk_dfs[ds]['POS'] + ":" + bulk_dfs[ds]['REF'] + "/" + bulk_dfs[ds]['ALT']
@@ -179,10 +177,12 @@ def main(args):
     if bulk_info['matched_bulk_normal'] is not None:
         normal_sample_name = bulk_info['matched_bulk_normal']["normal_sample_name"]
         bulk_dfs['matched_bulk_normal'] = read_vcf_to_df(bulk_info['matched_bulk_normal']["vcf"], normal_sample_name)
+        # @HZ 06/15/2023: filter out vars with zero depth/alt_read
+        bulk_dfs['matched_bulk_normal'] = bulk_dfs['matched_bulk_normal'][
+            (bulk_dfs['matched_bulk_normal']['ref_read_count'] > 0) & (bulk_dfs['matched_bulk_normal']['alt_read_count'] > 0)
+            ]
 
-        logging.info(f'[INFO] --- successfully loaded [matched_bulk_normal]. The DataFrame has {len(bulk_dfs["matched_bulk_normal"].index.unique().tolist())} unique variants.')
-        # AF calculation and index setting already in the `read_vcf_to_df` function
-        # bulk_dfs['matched_bulk_normal']['AF'] = bulk_dfs['matched_bulk_normal']['t_alt_count'] / bulk_dfs['matched_bulk_normal']['t_depth']
+        logging.info(f'[INFO] --- successfully loaded and filtered [matched_bulk_normal]. The DataFrame has {len(bulk_dfs["matched_bulk_normal"].index.unique().tolist())} unique variants.')
     else:
         bulk_dfs['matched_bulk_normal'] = None
         logging.info("[INFO] --- matched_bulk_normal is not given. Skipping.")
@@ -206,7 +206,7 @@ def main(args):
             pon_dfs = {}
             for pon_v in tap_pon:
                 pon_dfs[pon_v] = pd.read_csv(tap_pon[pon_v], index_col=0)
-                # embed()
+
                 if not check_matrix_format(pon_dfs[pon_v], CONDENSED_SNV_FORMAT):
                     logging.info(f'[ERROR] --- the index of {pon_v} is not in the correct condensed SNV format [chr]:[pos]:[ref]/[alt]. Exiting.')
                     sys.exit(1)
@@ -246,8 +246,9 @@ def main(args):
         logging.info(f'[INFO] --- successfully loaded Tapestri base-qual blacklist. The DataFrame has {len(blacklist_var_prev_df.index.unique().tolist())} unique variants.')
 
     else:
-        logging.warning('[WARNING] --- tap_basequal_blacklist not given! It is a required input for annotation. Exiting')
-        sys.exit(1)
+        logging.warning('[WARNING] --- tap_basequal_blacklist not given!')
+        blacklist_var_prev_df = None
+        # sys.exit(1)
 
     # 2. ----- annotate VAR_DF -----
 
@@ -315,6 +316,10 @@ def main(args):
                 annotated_df.at[var_i, f'{ref_data_type}-{ref_data_name}-{col_of_interest}'] = ann
                 ref_unique_count_covered += 1
 
+        # @HZ 06/01/2023: when no SNV to is covered, still add the column
+        if ref_unique_count_covered == 0:
+            annotated_df[f'{ref_data_type}-{ref_data_name}-{col_of_interest}'] = np.nan
+            
         return annotated_df, ref_unique_count, ref_unique_count_covered
 
     # (1). bulk data
@@ -337,7 +342,7 @@ def main(args):
                         ref_data_name='matched_bulk_tumor',
                         col_of_interest='AF',
                         )
-                    # embed()
+    
                     annotation_stats['bulk_tumor_unique_vars_count'] = bulk_tumor_unique_vars_count
                     annotation_stats['bulk_tumor_unique_vars_count_covered_by_Tapestri'] = bulk_tumor_unique_vars_count_covered
                     logging.info(f"[INFO] --- finished annotating matched_bulk_tumor from matched_bulk_cohort")
@@ -362,7 +367,6 @@ def main(args):
                 col_of_interest='AF',
                 summary_method = summary_method
                 )
-            # embed()
             annotation_stats['bulk_cohort_unique_vars_count'] = bulk_cohort_unique_vars_count
             annotation_stats['bulk_cohort_unique_vars_count_covered_by_Tapestri'] = bulk_cohort_unique_vars_count_covered
             logging.info(f"[INFO] --- finished annotating matched_bulk_cohort") 
@@ -383,21 +387,19 @@ def main(args):
     
     # (2). Tapestri PoN
     if pon_df is not None:
-        VAR_DF["PoN-superset-8-normals-occurence"] = VAR_DF.index.map(lambda x: pon_df.at[x, '8-normals-occurence'] if x in pon_df.index else np.nan).astype(float)
-        VAR_DF["PoN-superset-8-normals-median_sc_prev"] = VAR_DF.index.map(lambda x: pon_df.at[x, '8-normals-median_sc_prev'] if x in pon_df.index else np.nan).astype(float)
+        VAR_DF["PoN-superset-normals-occurence"] = VAR_DF.index.map(lambda x: pon_df.at[x, 'normals-occurence'] if x in pon_df.index else np.nan).astype(float)
+        VAR_DF["PoN-superset-normals-median_sc_prev"] = VAR_DF.index.map(lambda x: pon_df.at[x, 'normals-median_sc_prev'] if x in pon_df.index else np.nan).astype(float)
         logging.info("[INFO] --- finished annotating SUPERSET PoN")
         # annotation_stats[f'{pon_vc}_unique_vars_count'] = len(pon_df.index.unique().tolist())
-        annotation_stats['num_SNVs_present_in_ANY_normal_sample'] = int((VAR_DF["PoN-superset-8-normals-occurence"] > 0).sum())
+        annotation_stats['num_SNVs_present_in_ANY_normal_sample'] = int((VAR_DF["PoN-superset-normals-occurence"] > 0).sum())
 
     elif pon_dfs is not None:
         for pon_vc in pon_dfs:
-            # embed()
             # VAR_DF[f'median_sc_mut_prev-{pon_vc}'] = VAR_DF.index.map(lambda x: pon_dfs[pon_vc].at[x, 'median_sc_mut_prev'] if x in pon_dfs[pon_vc].index else np.nan)
             VAR_DF[f'PoN-{pon_vc}-mean_sc_mut_prev'] = VAR_DF.index.map(lambda x: pon_dfs[pon_vc].at[x, 'mean_num_cells_in_8_normals'] if x in pon_dfs[pon_vc].index else np.nan).astype(float)
             logging.info(f"[INFO] --- finished annotating {pon_vc}")
             annotation_stats[f'{pon_vc}_unique_vars_count'] = len(pon_dfs[pon_vc].index.unique().tolist())
             annotation_stats[f'{pon_vc}_unique_vars_count_covered_by_Tapestri'] = int((VAR_DF[f'PoN-{pon_vc}-mean_sc_mut_prev'] > 0).sum())
-            # embed()
     else:
         logging.warning('[WARNING] --- No PoN data given! The PoN filtered H5 would be the same as unfiltered')
     
@@ -458,10 +460,10 @@ def main(args):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--sample_name', type = str, help='sample name')
+    parser.add_argument('--sample_name', type = str, help='sample name, for output file naming')
     parser.add_argument('--input_h5', type = str, help='input_h5')
-    parser.add_argument('--bq_info_csv', type = str, help='base-quality info output by the custom pipeline.', default=None)
     parser.add_argument('--bulk_info_yaml', type = str, help='bulk_info_yaml')
+    parser.add_argument('--bq_info_csv', type = str, help='base-quality info output by the custom pipeline.', default=None)
     parser.add_argument('--output_dir', type = str, help='output_dir to write the output dataframe.', default=None)
     parser.add_argument('--output_annotated_snv_csv', type = str, help='optional output: annotated_snv_csv')
     parser.add_argument('--output_bulk_annotated_h5', type = str, help='optional output: bulk_annotated_h5', default=None)
