@@ -16,6 +16,7 @@ from datetime import datetime
 from collections import Counter
 
 from tea.cravat import get_technical_artifact_mask
+from tea.format import CONDENSED_SNV_FORMAT, check_matrix_format
 from tea.utils import get_simple_timestamp
 timestamp = get_simple_timestamp()
 from IPython import embed
@@ -36,7 +37,7 @@ def main(args):
     sample_names = analysis_config['sample_names']
     h5s = analysis_config['h5s']
     cravat_outputs = analysis_config['cravat_outputs']
-    cn_assignment_df = analysis_config['cn_assignment_df']
+    cn_assignment_f = analysis_config['cn_assignment_df']
 
     # ===============
 
@@ -68,12 +69,12 @@ def main(args):
 
     # ====== load cn_assignment_df ======
     cn_err = 0
-    if cn_assignment_df is None:
+    if cn_assignment_f is None:
         cn_err = 1
         print('[WARNING] No CN clone assignment file provided. All cells in the SNV heatmap will be in one cluster...')
     else:
-        cn_assignment_df = pd.read_csv(cn_assignment_df, index_col = 0)
-        print(f'[INFO] Loaded CN clone assignment file from [ {cn_assignment_df} ].')
+        cn_assignment_df = pd.read_csv(cn_assignment_f, index_col = 0)
+        print(f'[INFO] Loaded CN clone assignment file {cn_assignment_f}.')
         if not 'clone_id' in cn_assignment_df.columns:
             try: # try to add clone_id column
                 cn_assignment_df['clone_id'] = cn_assignment_df['cluster_id']
@@ -118,8 +119,11 @@ def main(args):
     # ====== set up for plotting ======
     # mkdir, get plotting params
     (wd / 'sc_heatmaps').mkdir(exist_ok=True, parents=True)
+    
+    ####################################
+    # ### ----- SNV selection ----- ####
+    ####################################
 
-    # ----- SNV selection -----
     snv_selection_params = analysis_config['snv_selection_params']
     
     # 1. mutational prevalence
@@ -152,9 +156,9 @@ def main(args):
     except TypeError:
         func_only = False
 
-    # 4. germline snvs
+    # 4. germline SNPs
     germline_attrs = {}
-    for germline_attr_i in ['remove_hom_germline_snps_af', 'rescue_1000genome_af']:
+    for germline_attr_i in ['select_hom_germline_snps_af', 'rescue_1000genome_af']:
         if not germline_attr_i in snv_selection_params:
             germline_attrs[germline_attr_i] = False
         else:
@@ -173,7 +177,16 @@ def main(args):
     
     # blacklist snvs
     if 'blacklist_snvs' in snv_selection_params and snv_selection_params['blacklist_snvs']:
-        blacklist_snvs = set(snv_selection_params['blacklist_snvs'])
+        if type(snv_selection_params['blacklist_snvs']) is list:
+            blacklist_snvs = set(snv_selection_params['blacklist_snvs'])
+        else:
+            try:
+                blacklist_snv_df = pd.read_csv(snv_selection_params['blacklist_snvs'], index_col=0)
+                if not check_matrix_format(blacklist_snv_df, CONDENSED_SNV_FORMAT):
+                    raise ValueError(f"[ERROR] blacklist_snvs file not in the correct format (index column needs to be in condensed SNV format).")
+                blacklist_snvs = set(blacklist_snv_df.index)
+            except:
+                raise ValueError(f"[ERROR] blacklist_snvs should either be a list of SNVs or a path to a CSV file whose index is the list of SNVs.")
     else:
         blacklist_snvs = []
 
@@ -207,6 +220,7 @@ def main(args):
                 print(f"[WARNING] mut_prev_i is higher than default upper_thres (0.01) for T>C filter. The filter will not be applied.")
                 filter_TtoC_artifact = False
         # -----------------------------------------------------------------
+
         voi_union = set()
         voi_count_union = {}
         ann_map_union = {}
@@ -257,12 +271,6 @@ def main(args):
                 voi = [ v for v in voi if v not in ado_high_vars ]
                 print(f"[INFO] In sample {sample_i}, filtered {len([v for v in voi if v in ado_high_vars])} SNVs due to high ADO")
                 ado_blacklist = ado_blacklist.union(set(ado_high_vars))
-
-            # remove homozygous germline SNVs, if specified
-            if germline_attrs['remove_hom_germline_snps_af'] is not None:
-                overall_af = sample_objs[sample_i].dna.get_attribute('alt_read_count', constraint='row').sum(axis=0) / sample_objs[sample_i].dna.get_attribute('DP', constraint='row').sum(axis=0)
-                voi = [x for x in voi if overall_af[x] < germline_attrs['remove_hom_germline_snps_af']]
-                print(f"[INFO] removed {len(mask) - len(voi)} homozygous germline SNVs (AF > {germline_attrs['remove_hom_germline_snps_af']})")
 
             voi = list(set(voi).union(whitelist_snvs))
             voi_mut_prev = Counter(cravat_dfs[sample_i].loc[voi, ('Tapestri_result', 'sc_mut_prev')].to_dict())
@@ -317,6 +325,20 @@ def main(args):
             voi_count_union.update(voi_mut_prev)
             ann_map_union.update(ann_map)
 
+        # select homozygous germline SNVs, if specified
+        if germline_attrs['select_hom_germline_snps_af']:
+            alt_combined = pd.concat(
+                [ sample_objs[sample_i].dna.get_attribute('alt_read_count', constraint='row') for sample_i in sample_names ], axis=0
+            )
+            dp_combined = pd.concat(
+                [ sample_objs[sample_i].dna.get_attribute('DP', constraint='row') for sample_i in sample_names ], axis=0 
+            )
+            overall_af = alt_combined.sum(axis=0) / dp_combined.sum(axis=0)
+            germline_hom_snps_from_tapestri = [x for x in voi_union if overall_af[x] > germline_attrs['select_hom_germline_snps_af']]
+            print(f"[INFO] selected {len(germline_hom_snps_from_tapestri)} homozygous germline SNVs (AF > {germline_attrs['select_hom_germline_snps_af']})")
+        else:
+            germline_hom_snps_from_tapestri = []
+
         # remove SNVs that are blacklisted
         print(f"[DEBUG] {len(voi_union)} SNVs before blacklist filtering")
         voi_union = voi_union.difference(TtoC_artifact_blacklist)
@@ -327,38 +349,75 @@ def main(args):
         print(f"[DEBUG] {len(voi_union)} SNVs after manual blacklist filtering")
 
         # embed()
+        voi_sorted = sorted(voi_union, key=voi_count_union.get, reverse=True)
+        # label germline and bulk somatic vars:
+        def __annotate_snvs(var, germline_hom_vars, other_bulk_germline_vars, bulk_somatic_vars):
+            if var in germline_hom_vars:
+                return "germline_HOM"
+            elif var in other_bulk_germline_vars:
+                return "germline_HET"
+            elif var in bulk_somatic_vars:
+                return "bulk_somatic"
+            else:
+                return "NA"
+            
+        with open(wd / 'sc_heatmaps' / topic / f"mut_prev={mut_prev_i}" / f'{topic}-voi.txt', 'w') as f:
+            voi_df = pd.DataFrame.from_dict(voi_count_union, orient='index', columns=['mut_prev']).loc[voi_sorted]
+            voi_df['HGVSp'] = voi_df.index.map(lambda x: ann_map_union[x])
+            voi_df['annotation'] = voi_df.index.map(
+                lambda x: __annotate_snvs(x, germline_hom_snps_from_tapestri, bulk_germline_vars, bulk_somatic_vars)
+            )
+            voi_df.index.name = 'condensed_format'
+            f.write(f"# {timestamp}\n")
+            f.write(f"# cohort_name: {cohort_name}")
+            f.write(f"# sample_names: {sample_names}")
+            f.write('# ======  [snv_selection_params] ======\n')
+            f.write(f"# attribute: {attribute}\n")
+            f.write(f"# mut_prev_threshold: {mut_prev_i}\n")
+            f.write(f"# bq_prev_threshold: {bq_prev_threshold}\n")
+            f.write(f"# topic: {topic}\n")
+            f.write(f"# func_only: {func_only}\n")
+            f.write(f"# normals_occurences: {normals_occurences}\n")
+            f.write(f"# ado_threshold: {ado_threshold}\n")
+            f.write(f"# germline_attrs: {germline_attrs}\n")
+            f.write(f"# filter_TtoC_artifact: {snv_selection_params['filter_TtoC_artifact']}\n")
+            f.write(f"# whitelist_snvs: {whitelist_snvs}\n")
+            if 'blacklist_snvs' in snv_selection_params:
+                f.write(f"# blacklist_snvs: {snv_selection_params['blacklist_snvs']}\n")
+            else:
+                f.write(f"# blacklist_snvs: None\n")
+            f.write('# =====================================\n')
 
+            voi_df.to_csv(f, sep='\t', index=True, header=True)
+            
+        if args.filter_snv_only:
+            # stop after filtering
+            sys.exit()
+
+        # ====== plot ======
         # ===== highlight vars with bulk annotation ====='
         # highlight vars
-        germline_var_col = '#00cc66' # dark green
+        germline_hom_var_col = '#00cc66' # green
+        germline_het_var_col = '#2693ff' # blue
         somatic_var_col = '#ff0000' # red
 
         for var_i in ann_map_union:
             # germline
-            if var_i in bulk_germline_vars:
-                ann_map_union[var_i] = f'<span style="color:{germline_var_col};">' + ann_map_union[var_i] + '</span>'
+            if var_i in germline_hom_snps_from_tapestri:
+                ann_map_union[var_i] = f'<span style="color:{germline_hom_var_col};">' + ann_map_union[var_i] + '</span>'
+            elif var_i in bulk_germline_vars:
+                ann_map_union[var_i] = f'<span style="color:{germline_het_var_col};">' + ann_map_union[var_i] + '</span>'
             elif var_i in bulk_somatic_vars:
                 ann_map_union[var_i] = f'<span style="color:{somatic_var_col};">' + ann_map_union[var_i] + '</span>'
             else:
                 pass
-
-        voi_sorted = sorted(voi_union, key=voi_count_union.get, reverse=True)
-        with open(wd / 'sc_heatmaps' / topic / f"mut_prev={mut_prev_i}" / f'{topic}-voi.txt', 'w') as f:
-            f.write(f"timestamp\n")
-            f.write('=====================\n')
-            f.write(f"bq_prev_threshold: {bq_prev_threshold}\n")
-            f.write(f"mut_prev_threshold: {mut_prev_i}\n")
-            f.write(f"topic: {topic}\n")
-            f.write(f"func_only: {func_only}\n")
-            for voi_i in voi_sorted:
-                f.write(f"{voi_i}\t{voi_count_union[voi_i]}\n")
 
         for sample_i in sample_names:
             for attribute_i in attribute:
                 fig = plot_snv_clone(
                     sample_objs[sample_i],
                     sample_name=sample_i,
-                    story_topic = 'major_driver_snvs',
+                    story_topic = 'high_conf_mutations-{topic}',
                     voi = voi_sorted,
                     attribute = attribute_i,
                     ann_map = ann_map_union
@@ -376,7 +435,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--wd', type=str, help='working directory')
     parser.add_argument('--analysis_config', type=str, help='analysis_config.yaml')
-    parser.add_argument('--write_cn_clone_added_h5s', type=bool, help='write_cn_clone_added_h5s', default=True)
+    parser.add_argument('--filter_snv_only', type=bool, help='only filter and write SNVs; not proceed into making heatmaps.', default=False)
+#     parser.add_argument('--combined_heatmap', type=bool, help='make a combined heatmap for all samples', default=False)
+    parser.add_argument('--write_cn_clone_added_h5s', type=bool, help='write_cn_clone_added_h5s', default=False)
 
     args = parser.parse_args(None if sys.argv[1:] else ['-h'])
 
