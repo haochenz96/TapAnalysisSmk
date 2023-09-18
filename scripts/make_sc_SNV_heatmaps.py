@@ -75,6 +75,7 @@ def main(args):
     else:
         cn_assignment_df = pd.read_csv(cn_assignment_f, index_col = 0)
         print(f'[INFO] Loaded CN clone assignment file {cn_assignment_f}.')
+        
         if not 'clone_id' in cn_assignment_df.columns:
             try: # try to add clone_id column
                 cn_assignment_df['clone_id'] = cn_assignment_df['cluster_id']
@@ -98,7 +99,12 @@ def main(args):
                 sample_objs[sample_i].dna.set_palette(cn_clone_palette)
             except KeyError:
                 print (f'[ERROR] {sample_i} not found in cn_assignment_df.index!')
+                # embed()
                 cn_err = 1
+            else:
+                sample_objs[sample_i].cnv.row_attrs['label'] = sample_objs[sample_i].dna.row_attrs['label']
+                sample_objs[sample_i].cnv.set_palette(cn_clone_palette)
+                # sample_objs[sample_i].cnv.get_gene_names()
 
             num_cells = sample_objs[sample_i].dna.shape[0]
             print(f'[INFO] {sample_i} has {num_cells} cells.')
@@ -107,6 +113,7 @@ def main(args):
                 out_dir.mkdir(exist_ok=True, parents=True)
                 try:
                     mio.save(sample_objs[sample_i], str(out_dir / f"{sample_i}_cn_clone_added.h5"))
+                    print(f'[INFO] {out_dir / f"{sample_i}_cn_clone_added.h5"} saved.')
                 except FileExistsError:
                     print(f'[WARNING] {out_dir / f"{sample_i}_cn_clone_added.h5"} already exists! Overwriting...')
                     try: 
@@ -222,38 +229,58 @@ def main(args):
         # -----------------------------------------------------------------
 
         voi_union = set()
-        voi_count_union = {}
-        ann_map_union = {}
+        voi_count_union = Counter()
+        # ann_map_union = {}
         bulk_germline_vars = set()
         bulk_somatic_vars = set()
         TtoC_artifact_blacklist = set()
         ado_blacklist = set()
 
         # ====== for each sample_i, filter SNVs and get a union set for plotting  ======
-        # embed()
         for sample_i in sample_names:
             num_cells = sample_objs[sample_i].dna.shape[0]
-            
-            # this masks on PoN's (rescuing 1000genome SNVs) and bq_prev_threshold
-            mask = get_technical_artifact_mask(cravat_dfs[sample_i], num_cells = num_cells, bq_prev_threshold = bq_prev_threshold, normals_pon_occurence=normals_occurences, rescue_1000genome_af = germline_attrs['rescue_1000genome_af'], filter_broad_wes_pon = False)
-            
-            # # filters on mut_prev_threshold
-            # mask = mask & (cravat_dfs[sample_i][('Tapestri_result', 'sc_mut_prev')] >= mut_prev_i * num_cells)
-            
-            # filter on T>C artifacts that are rare
-            if filter_TtoC_artifact:
-                tc_mask = (cravat_dfs[sample_i].index.str.endswith('T/C')) & (cravat_dfs[sample_i][('Tapestri_result', 'sc_mut_prev')] >= filter_TtoC_artifact_lower_thres * num_cells) & (cravat_dfs[sample_i][('Tapestri_result', 'sc_mut_prev')] <= filter_TtoC_artifact_upper_thres * num_cells)
-                print(f"[INFO] {sample_i} has {tc_mask.sum()} T>C artifacts that are rare. They will be filtered out.")
-                mask = mask & ~tc_mask
-                TtoC_artifact_blacklist = TtoC_artifact_blacklist.union(
-                    set(cravat_dfs[sample_i].index[tc_mask].tolist())
-                )
+
+            snvs = cravat_dfs[sample_i].index
+            mut_prev_series = sample_objs[sample_i].dna.get_attribute("mut_filtered", constraint="row").sum(axis=0)[snvs]
+        
+            technical_mask = get_technical_artifact_mask(
+                snvs,
+                cravat_dfs[sample_i], 
+                num_cells = num_cells, 
+                mut_prev_series = mut_prev_series,
+                bq_prev_threshold = bq_prev_threshold, 
+                normals_pon_occurence = normals_occurences, 
+                rescue_1000genome_af = germline_attrs['rescue_1000genome_af'], 
+                filter_broad_wes_pon = False,
+                ado_threshold = None,
+                ngt_df = None,
+                filter_TtoC_artifact = None,
+                blacklist = None,
+                )            
 
             # filters on functional SNVs
             if func_only:
-                mask = mask & ~cravat_dfs[sample_i][('Variant Annotation', 'Sequence Ontology')].isin(NONFUNC_SO)
+                mask = technical_mask & ~cravat_dfs[sample_i][('Variant Annotation', 'Sequence Ontology')].isin(NONFUNC_SO)
+            else:
+                mask = technical_mask
 
-            voi = cravat_dfs[sample_i].index[mask].tolist()
+            voi = snvs[mask].tolist()
+
+            # BLACKLIST T>C artifacts that are rare in EACH SAMPLE
+            if filter_TtoC_artifact:
+                tc_mask = (snvs.str.endswith('T/C')) & (mut_prev_series >= filter_TtoC_artifact_lower_thres * num_cells) & (mut_prev_series <= filter_TtoC_artifact_upper_thres * num_cells)
+                print(f"[INFO] {sample_i} has {tc_mask.sum()} T>C artifacts that are rare. They will be added to the blacklist.")
+                TtoC_artifact_blacklist = TtoC_artifact_blacklist.union(
+                    set(snvs[tc_mask].tolist())
+                )
+
+            # BLACKLIST SNVs that have too high ADO in any sample
+            if ado_threshold is not None:
+                ado_high_vars = sample_objs[sample_i].dna.ids()[
+                    (sample_objs[sample_i].dna.get_attribute('NGT',constraint='row') == 3).sum(axis=0) > (ado_threshold*num_cells)
+                ]
+                print(f"[INFO] {sample_i} has {len(ado_high_vars)} SNVs with ADO > {ado_threshold}. They will be added to the blacklist.")
+                ado_blacklist = ado_blacklist.union(set(ado_high_vars))
 
             # filters on mut_prev_threshold
             prev_filtered_vars = sample_objs[sample_i].dna.ids()[
@@ -261,27 +288,10 @@ def main(args):
             ]
             # take intersection
             voi = [ v for v in voi if v in prev_filtered_vars ]
-
-            # blacklist SNVs that have too high ADO in any sample
-            if ado_threshold is not None:
-                ado_high_vars = sample_objs[sample_i].dna.ids()[
-                    (sample_objs[sample_i].dna.get_attribute('NGT',constraint='row') == 3).sum(axis=0) > (ado_threshold*num_cells)
-                ]
-                
-                voi = [ v for v in voi if v not in ado_high_vars ]
-                print(f"[INFO] In sample {sample_i}, filtered {len([v for v in voi if v in ado_high_vars])} SNVs due to high ADO")
-                ado_blacklist = ado_blacklist.union(set(ado_high_vars))
-
-            voi = list(set(voi).union(whitelist_snvs))
-            voi_mut_prev = Counter(cravat_dfs[sample_i].loc[voi, ('Tapestri_result', 'sc_mut_prev')].to_dict())
-
             print(f'{sample_i}: {len(voi)} / {len(cravat_dfs[sample_i])} SNVs are kept (min prev: {mut_prev_i})')
-            ann = cravat_dfs[sample_i].loc[voi, :].index.map(
-                lambda x: 
-                cravat_dfs[sample_i].loc[x, ('Variant Annotation', 'Gene')] + ' ' + cravat_dfs[sample_i].loc[x, ('Variant Annotation', 'Protein Change')] if not isNaN(cravat_dfs[sample_i].loc[x, ('Variant Annotation','Protein Change')])
-                else cravat_dfs[sample_i].loc[x, ('Variant Annotation','Gene')] + ' ' + cravat_dfs[sample_i].loc[x, ('Variant Annotation','Sequence Ontology')]
-            )
-            ann_map = dict(zip(voi, ann))
+
+            # voi = list(set(voi).union(whitelist_snvs))
+            voi_mut_prev = Counter(mut_prev_series.to_dict())
 
             # ====== save bulk annotated vars ======
 
@@ -307,23 +317,17 @@ def main(args):
                     print(f'[WARNING] No bulk cohort SNVs detected in {sample_i}')
                 bulk_somatic_vars.update(bulk_cohort_vars)
 
-            # try:
-            #     bulk_annotation_df = cravat_dfs[sample_i].loc[voi, [
-            #         ('bulk_comparison', 'bulk-matched_bulk_normal-AF'), 
-            #         ('bulk_comparison', 'bulk-matched_bulk_cohort-AF'),
-            #         ]] > 0
-            #     for var_i in bulk_annotation_df.index:
-            #         if bulk_annotation_df.loc[var_i, ('bulk_comparison', 'bulk-matched_bulk_normal-AF')] == True:
-            #             bulk_germline_vars.add(var_i)
-            #         elif bulk_annotation_df.loc[var_i, ('bulk_comparison', 'bulk-matched_bulk_cohort-AF')] == True:
-            #             bulk_somatic_vars.add(var_i)
-            # except KeyError:
-            #     print(f'bulk annotation not found in CRAVAT DF for {sample_i}')
-
             # ===== get a union of all samples SNVs =====
             voi_union = voi_union.union(set(voi))
-            voi_count_union.update(voi_mut_prev)
-            ann_map_union.update(ann_map)
+            voi_count_union += voi_mut_prev
+            # ann_map_union.update(ann_map)
+
+        # ====== concatenate all CRAVAT DFs ======
+        cravat_df_union = pd.concat(
+            [ cravat_dfs[sample_i] for sample_i in sample_names ], axis=0
+        )
+        # use unique index
+        cravat_df_union = cravat_df_union.loc[~cravat_df_union.index.duplicated(keep='first')]
 
         # select homozygous germline SNVs, if specified
         if germline_attrs['select_hom_germline_snps_af']:
@@ -347,6 +351,20 @@ def main(args):
         print(f"[DEBUG] {len(voi_union)} SNVs after ADO blacklist filtering")
         voi_union = voi_union.difference(blacklist_snvs)
         print(f"[DEBUG] {len(voi_union)} SNVs after manual blacklist filtering")
+
+        # add whitelist
+        for v in whitelist_snvs:
+            if not v in cravat_df_union.index:
+                raise ValueError(f"[ERROR] {v} from whitelist is not found in CRAVAT DF index!")
+        voi_union = list(voi_union.union(whitelist_snvs))
+
+        # ===== annotation =====
+        ann = cravat_df_union.loc[voi_union, :].index.map(
+            lambda x: 
+            cravat_df_union.loc[x, ('Variant Annotation', 'Gene')] + ' ' + cravat_df_union.loc[x, ('Variant Annotation', 'Protein Change')] if not isNaN(cravat_df_union.loc[x, ('Variant Annotation','Protein Change')])
+            else cravat_df_union.loc[x, ('Variant Annotation','Gene')] + ' ' + cravat_df_union.loc[x, ('Variant Annotation','Sequence Ontology')]
+        )
+        ann_map_union = dict(zip(voi_union, ann))
 
         # embed()
         voi_sorted = sorted(voi_union, key=voi_count_union.get, reverse=True)
