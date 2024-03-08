@@ -342,7 +342,7 @@ def main(args):
             print(f"[INFO] selected {len(germline_hom_snps_from_tapestri)} homozygous germline SNVs (AF > {germline_attrs['select_hom_germline_snps_af']})")
         else:
             germline_hom_snps_from_tapestri = []
-
+        # embed()
         # remove SNVs that are blacklisted
         print(f"[DEBUG] {len(voi_union)} SNVs before blacklist filtering")
         voi_union = voi_union.difference(TtoC_artifact_blacklist)
@@ -410,6 +410,7 @@ def main(args):
             
         if args.filter_snv_only:
             # stop after filtering
+            print(f"[INFO] SNV filtering done. Skipping heatmap making...")
             sys.exit()
 
         # ====== plot ======
@@ -453,7 +454,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--wd', type=str, help='working directory')
     parser.add_argument('--analysis_config', type=str, help='analysis_config.yaml')
-    parser.add_argument('--filter_snv_only', type=bool, help='only filter and write SNVs; not proceed into making heatmaps.', default=False)
+    parser.add_argument('--filter_snv_only', action="store_true", help='only filter and write SNVs; not proceed into making heatmaps.')
 #     parser.add_argument('--combined_heatmap', type=bool, help='make a combined heatmap for all samples', default=False)
     parser.add_argument('--write_cn_clone_added_h5s', type=bool, help='write_cn_clone_added_h5s', default=False)
 
