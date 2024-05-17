@@ -1,6 +1,5 @@
 import argparse
 from pathlib import Path
-import re
 import os, sys
 import yaml
 
@@ -12,7 +11,6 @@ import plotly.graph_objects as go
 from tea.cravat import NONFUNC_SO
 from tea.format import isNaN
 from tea.plots import plot_snv_clone
-from datetime import datetime
 from collections import Counter
 
 from tea.cravat import get_technical_artifact_mask
@@ -196,7 +194,13 @@ def main(args):
                 raise ValueError(f"[ERROR] blacklist_snvs should either be a list of SNVs or a path to a CSV file whose index is the list of SNVs.")
     else:
         blacklist_snvs = []
-
+        
+    # highlight snvs
+    if 'highlight_snvs' in snv_selection_params and snv_selection_params['highlight_snvs']:
+        highlight_snvs = set(snv_selection_params['highlight_snvs'])
+    else:
+        highlight_snvs = []
+        
     for mut_prev_i in mut_prev_threshold:
         print(f"""
               ===== 
@@ -419,10 +423,13 @@ def main(args):
         germline_hom_var_col = '#00cc66' # green
         germline_het_var_col = '#2693ff' # blue
         somatic_var_col = '#ff0000' # red
+        highlight_var_col = "#ffcc00"
 
         for var_i in ann_map_union:
+            if var_i in highlight_snvs:
+                ann_map_union[var_i] = f'<span style="color:{highlight_var_col};">' + ann_map_union[var_i] + '</span>'
             # germline
-            if var_i in germline_hom_snps_from_tapestri:
+            elif var_i in germline_hom_snps_from_tapestri:
                 ann_map_union[var_i] = f'<span style="color:{germline_hom_var_col};">' + ann_map_union[var_i] + '</span>'
             elif var_i in bulk_germline_vars:
                 ann_map_union[var_i] = f'<span style="color:{germline_het_var_col};">' + ann_map_union[var_i] + '</span>'

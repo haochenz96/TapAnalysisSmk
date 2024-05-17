@@ -216,6 +216,7 @@ def main(args):
         else:
             raise ValueError(f'[ERROR] --- tap_pon needs to be a string or a dictionary!')
     else:
+        pon_df = None
         pon_dfs = None
         logging.warning('[WARNING] --- tap_pon not given')
 
